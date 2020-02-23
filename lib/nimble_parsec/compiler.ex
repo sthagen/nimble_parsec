@@ -220,6 +220,10 @@ defmodule NimbleParsec.Compiler do
     end
   end
 
+  defp compile_unbound_combinator({:eventually, combinators}, current, step, config) do
+    compile_eventually(combinators, current, step, config)
+  end
+
   defp compile_unbound_combinator({:choice, choices} = combinator, current, step, config) do
     config =
       update_in(config.labels, fn
@@ -324,14 +328,20 @@ defmodule NimbleParsec.Compiler do
     {Enum.reverse([last_def | defs]), inline, next, step, :catch_none}
   end
 
-  defp traverse(_traversal, next, _, _, _, _, _, %{replace: true}) do
-    quote(do: unquote(next)(rest, acc, stack, context, line, offset))
+  defp traverse(_traversal, next, _, user_acc, _, _, _, %{replace: true}) do
+    quote do
+      _ = unquote(user_acc)
+      unquote(next)(rest, acc, stack, context, line, offset)
+    end
   end
 
   defp traverse(traversal, next, rest, user_acc, context, line, offset, _) do
     case apply_traverse(traversal, rest, user_acc, context, line, offset) do
-      {user_acc, ^context} when user_acc != :error ->
-        quote(do: unquote(next)(rest, unquote(user_acc) ++ acc, stack, context, line, offset))
+      {expanded_acc, ^context} when user_acc != :error ->
+        quote do
+          _ = unquote(user_acc)
+          unquote(next)(rest, unquote(expanded_acc) ++ acc, stack, context, line, offset)
+        end
 
       quoted ->
         quote do
@@ -373,6 +383,28 @@ defmodule NimbleParsec.Compiler do
         {acc, context}
       end
     end
+  end
+
+  ## Eventually
+
+  defp compile_eventually(combinators, current, step, config) do
+    {failure, step} = build_next(step, config)
+    failure_def = build_eventually_next_def(current, failure)
+    catch_all_def = build_catch_all(:positive, failure, combinators, config)
+
+    config = %{config | catch_all: failure, acc_depth: 0}
+    {defs, inline, success, step} = compile(combinators, [], [], current, step, config)
+
+    defs = Enum.reverse(defs, [failure_def, catch_all_def])
+    {defs, [{failure, @arity} | inline], success, step, :catch_none}
+  end
+
+  defp build_eventually_next_def(current, failure) do
+    head = quote(do: [<<byte, rest::binary>>, acc, stack, context, line, offset])
+    offset = add_offset(quote(do: offset), 1)
+    line = add_line(quote(do: line), offset, quote(do: byte))
+    body = {current, [], quote(do: [rest, acc, stack, context]) ++ [line, offset]}
+    {failure, head, true, body}
   end
 
   ## Repeat
@@ -746,14 +778,7 @@ defmodule NimbleParsec.Compiler do
 
     line =
       if newline_allowed?(inclusive) and not newline_forbidden?(exclusive) do
-        quote do
-          line = unquote(line)
-
-          case unquote(var) do
-            ?\n -> {elem(line, 0) + 1, unquote(offset)}
-            _ -> line
-          end
-        end
+        add_line(line, offset, var)
       else
         line
       end
@@ -833,6 +858,17 @@ defmodule NimbleParsec.Compiler do
     end)
   end
 
+  defp add_line(line, offset, var) do
+    quote do
+      line = unquote(line)
+
+      case unquote(var) do
+        ?\n -> {elem(line, 0) + 1, unquote(offset)}
+        _ -> line
+      end
+    end
+  end
+
   ## Label
 
   defp labels([]) do
@@ -852,12 +888,15 @@ defmodule NimbleParsec.Compiler do
   end
 
   defp label({:bin_segment, inclusive, exclusive, modifiers}) do
-    inclusive = Enum.map(inclusive, &inspect_bin_range(&1))
-    exclusive = Enum.map(exclusive, &inspect_bin_range(elem(&1, 1)))
+    {inclusive, printable?} = Enum.map_reduce(inclusive, true, &inspect_bin_range(&1, &2))
+
+    {exclusive, printable?} =
+      Enum.map_reduce(exclusive, printable?, &inspect_bin_range(elem(&1, 1), &2))
 
     prefix =
       cond do
-        :integer in modifiers -> "byte"
+        :integer in modifiers and not printable? -> "byte"
+        :integer in modifiers -> "ASCII character"
         :utf8 in modifiers -> "utf8 codepoint"
         :utf16 in modifiers -> "utf16 codepoint"
         :utf32 in modifiers -> "utf32 codepoint"
@@ -876,6 +915,10 @@ defmodule NimbleParsec.Compiler do
 
   defp label({:repeat, combinators, _}) do
     labels(combinators)
+  end
+
+  defp label({:eventually, combinators}) do
+    labels(combinators) <> " eventually"
   end
 
   defp label({:times, combinators, _, _}) do
@@ -939,23 +982,17 @@ defmodule NimbleParsec.Compiler do
     end
   end
 
-  defp inspect_bin_range(min..max) do
-    if ascii?(min) and ascii?(max) do
-      <<" in the range ", ??, min, ?., ?., ??, max>>
-    else
-      " in the range #{Integer.to_string(min)}..#{Integer.to_string(max)}"
-    end
+  defp inspect_bin_range(min..max, printable?) do
+    {" in the range #{inspect_char(min)} to #{inspect_char(max)}",
+     printable? and printable?(min) and printable?(max)}
   end
 
-  defp inspect_bin_range(min) do
-    if ascii?(min) do
-      <<" equal to ", ??, min>>
-    else
-      " equal to #{Integer.to_string(min)}"
-    end
+  defp inspect_bin_range(min, printable?) do
+    {" equal to #{inspect_char(min)}", printable? and printable?(min)}
   end
 
-  defp ascii?(char), do: char >= 32 and char <= 126
+  defp printable?(codepoint), do: List.ascii_printable?([codepoint])
+  defp inspect_char(codepoint), do: inspect([codepoint], charlists: :as_charlists)
 
   defp apply_bin_modifiers(expr, modifiers) do
     case modifiers do

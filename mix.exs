@@ -1,14 +1,14 @@
 defmodule NimbleParsec.MixProject do
   use Mix.Project
 
-  @version "0.5.2"
-  @url "https://github.com/plataformatec/nimble_parsec"
+  @version "0.6.0-dev"
+  @url "https://github.com/dashbitco/nimble_parsec"
 
   def project do
     [
       app: :nimble_parsec,
       version: @version,
-      elixir: "~> 1.4",
+      elixir: "~> 1.6",
       name: "NimbleParsec",
       description: "A simple and fast library for text-based parser combinators",
       aliases: [docs: &build_docs/1],
@@ -24,13 +24,13 @@ defmodule NimbleParsec.MixProject do
     %{
       licenses: ["Apache 2"],
       maintainers: ["José Valim"],
-      links: %{"GitHub" => "https://github.com/plataformatec/nimble_parsec"}
+      links: %{"GitHub" => "https://github.com/dashbitco/nimble_parsec"}
     }
   end
 
   defp build_docs(_) do
     Mix.Task.run("compile")
-    ex_doc = Path.join(Mix.Local.path_for(:escript), "ex_doc")
+    ex_doc = Path.join(Mix.path_for(:escripts), "ex_doc")
 
     unless File.exists?(ex_doc) do
       raise "cannot build docs because escript for ex_doc is not installed"

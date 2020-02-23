@@ -190,16 +190,18 @@ defmodule NimbleParsec do
 
   @typep unbound_combinator ::
            {:choice, [t]}
+           | {:eventually, t}
+           | {:lookahead, t, :positive | :negative}
            | {:parsec, atom}
            | {:repeat, t, mfargs}
            | {:times, t, min :: non_neg_integer, pos_integer}
-           | {:lookahead, t, :positive | :negative}
 
   @doc ~S"""
   Returns an empty combinator.
 
   An empty combinator cannot be compiled on its own.
   """
+  @spec empty() :: t()
   def empty() do
     []
   end
@@ -397,7 +399,7 @@ defmodule NimbleParsec do
       #=> {:ok, [?1, ?a], "", %{}, {1, 0}, 2}
 
       MyParser.digit_and_lowercase("a1")
-      #=> {:error, "expected a byte in the range ?0..?9, followed by a byte in the range ?a..?z", "a1", %{}, 1, 1}
+      #=> {:error, "expected ASCII character in the range '0' to '9', followed by ASCII character in the range 'a' to 'z'", "a1", %{}, {1, 0}, 0}
 
   """
   @spec ascii_char(t, [range]) :: t
@@ -432,7 +434,7 @@ defmodule NimbleParsec do
       #=> {:ok, [?1, ?é], "", %{}, {1, 0}, 2}
 
       MyParser.digit_and_utf8("a1")
-      #=> {:error, "expected a utf8 codepoint in the range ?0..?9, followed by a utf8 codepoint", "a1", %{}, {1, 0}, 0}
+      #=> {:error, "expected utf8 codepoint in the range '0' to '9', followed by utf8 codepoint", "a1", %{}, {1, 0}, 0}
 
   """
   @spec utf8_char(t, [range]) :: t
@@ -493,7 +495,7 @@ defmodule NimbleParsec do
       #=> {:ok, [12], "3", %{}, {1, 0}, 2}
 
       MyParser.two_digits_integer("1a3")
-      #=> {:error, "expected a two digits integer", "1a3", %{}, {1, 0}, 0}
+      #=> {:error, "expected ASCII character in the range '0' to '9', followed by ASCII character in the range '0' to '9'", "1a3", %{}, {1, 0}, 0}
 
   With min and max:
 
@@ -507,7 +509,7 @@ defmodule NimbleParsec do
       #=> {:ok, [123], "", %{}, {1, 0}, 2}
 
       MyParser.two_digits_integer("1a3")
-      #=> {:error, "expected a two digits integer", "1a3", %{}, {1, 0}, 0}
+      #=> {:error, "expected ASCII character in the range '0' to '9', followed by ASCII character in the range '0' to '9'", "1a3", %{}, {1, 0}, 0}
 
   If the size of the integer has a min and max close to each other, such as
   from 2 to 4 or from 1 to 2, using choice may emit more efficient code:
@@ -1190,6 +1192,32 @@ defmodule NimbleParsec do
     quoted_repeat_while(combinator, to_repeat, {__MODULE__, :__cont_context__, []})
   end
 
+  @doc """
+  Marks the given combinator should appear eventually.
+
+  Any other data before the combinator appears is discarded.
+  If the combinator never appears, then it is an error.
+
+  ## Examples
+
+      defmodule MyParser do
+        import NimbleParsec
+
+        hour = integer(min: 1, max: 2)
+        defparsec :extract_hour, eventually(hour)
+      end
+
+      MyParser.extract_hour("let's meet at 12?")
+      #=> {:ok, [12], "?", %{}, {1, 0}, 16}
+
+  """
+  @spec eventually(t, t) :: t
+  def eventually(combinator \\ empty(), eventually)
+      when is_combinator(combinator) and is_combinator(eventually) do
+    non_empty!(eventually, "eventually")
+    [{:eventually, Enum.reverse(eventually)} | combinator]
+  end
+
   @doc ~S"""
   Repeats while the given remote or local function `while` returns
   `{:cont, context}`.
@@ -1276,7 +1304,7 @@ defmodule NimbleParsec do
 
   `while` is a `{module, function, args}` and it will receive 4
   additional arguments. The AST representations of the binary to be
-  parsed, context, line and offset will be prended to `args`. `while`
+  parsed, context, line and offset will be prepended to `args`. `while`
   is invoked at compile time and is useful in combinators that avoid
   injecting runtime dependencies.
   """
