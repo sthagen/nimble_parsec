@@ -119,16 +119,18 @@ Add `nimble_parsec` to your list of dependencies in `mix.exs`:
 
 ```elixir
 def deps do
-  [{:nimble_parsec, "~> 0.2"}]
+  [{:nimble_parsec, "~> 0.5"}]
 end
 ```
 
 ## Nimble*
 
-Other nimble libraries by Dashbit:
+All nimble libraries by Dashbit:
 
   * [NimbleCSV](https://github.com/dashbitco/nimble_csv) - simple and fast CSV parsing
-  * [NimblePool](https://github.com/dashbitco/nimble_pool) - simple and small resource-pool
+  * [NimbleOptions](https://github.com/dashbitco/nimble_options) - tiny library for validating and documenting high-level options
+  * [NimbleParsec](https://github.com/dashbitco/nimble_parsec) - simple and fast parser combinators
+  * [NimblePool](https://github.com/dashbitco/nimble_pool) - tiny resource-pool implementation
 
 ## License
 
