@@ -119,7 +119,7 @@ Add `nimble_parsec` to your list of dependencies in `mix.exs`:
 
 ```elixir
 def deps do
-  [{:nimble_parsec, "~> 0.5"}]
+  [{:nimble_parsec, "~> 0.6"}]
 end
 ```
 
@@ -131,6 +131,8 @@ All nimble libraries by Dashbit:
   * [NimbleOptions](https://github.com/dashbitco/nimble_options) - tiny library for validating and documenting high-level options
   * [NimbleParsec](https://github.com/dashbitco/nimble_parsec) - simple and fast parser combinators
   * [NimblePool](https://github.com/dashbitco/nimble_pool) - tiny resource-pool implementation
+  * [NimblePublisher](https://github.com/dashbitco/nimble_publisher) - a minimal filesystem-based publishing engine with Markdown support and code highlighting
+  * [NimbleTOTP](https://github.com/dashbitco/nimble_totp) - tiny library for generating time-based one time passwords (TOTP)
 
 ## License
 
