@@ -94,7 +94,7 @@ defmodule NimbleParsec do
 
   """
   defmacro defparsec(name, combinator, opts \\ []) do
-    compile(:def, name, combinator, opts)
+    compile(:def, :defp, name, combinator, opts)
   end
 
   @doc """
@@ -103,7 +103,7 @@ defmodule NimbleParsec do
   The same as `defparsec/3` but the parsing function is private.
   """
   defmacro defparsecp(name, combinator, opts \\ []) do
-    compile(:defp, name, combinator, opts)
+    compile(:defp, :defp, name, combinator, opts)
   end
 
   @doc """
@@ -113,26 +113,58 @@ defmodule NimbleParsec do
   an entry-point parsing function, just the combinator function
   to be used with `parsec/2`.
   """
-  defmacro defcombinatorp(name, combinator, opts \\ []) do
-    compile(nil, name, combinator, opts)
+  defmacro defcombinator(name, combinator, opts \\ []) do
+    compile(nil, :def, name, combinator, opts)
   end
 
-  defp compile(kind, name, combinator, opts) do
+  @doc """
+  Defines a combinator with the given `name` and `opts`.
+
+  It is similar to `defparsecp/3` except it does not define
+  an entry-point parsing function, just the combinator function
+  to be used with `parsec/2`.
+  """
+  defmacro defcombinatorp(name, combinator, opts \\ []) do
+    compile(nil, :defp, name, combinator, opts)
+  end
+
+  defp compile(parser_kind, combinator_kind, name, combinator, opts) do
     combinator =
-      quote bind_quoted: [kind: kind, name: name, combinator: combinator, opts: opts] do
+      quote bind_quoted: [
+              parser_kind: parser_kind,
+              combinator_kind: combinator_kind,
+              name: name,
+              combinator: combinator,
+              opts: opts
+            ] do
         {defs, inline} = NimbleParsec.Compiler.compile(name, combinator, opts)
-        NimbleParsec.Recorder.record(__MODULE__, kind, name, defs, inline, opts)
+
+        NimbleParsec.Recorder.record(
+          __MODULE__,
+          parser_kind,
+          combinator_kind,
+          name,
+          defs,
+          inline,
+          opts
+        )
 
         if inline != [] do
           @compile {:inline, inline}
         end
 
-        for {name, args, guards, body} <- defs do
-          defp unquote(name)(unquote_splicing(args)) when unquote(guards), do: unquote(body)
+        if combinator_kind == :def do
+          for {name, args, guards, body} <- defs do
+            def unquote(name)(unquote_splicing(args)) when unquote(guards), do: unquote(body)
+          end
+        else
+          for {name, args, guards, body} <- defs do
+            defp unquote(name)(unquote_splicing(args)) when unquote(guards), do: unquote(body)
+          end
         end
       end
 
-    parser = compile_parser(name, kind)
+    parser = compile_parser(name, parser_kind)
 
     quote do
       unquote(parser)
@@ -192,7 +224,7 @@ defmodule NimbleParsec do
            {:choice, [t]}
            | {:eventually, t}
            | {:lookahead, t, :positive | :negative}
-           | {:parsec, atom}
+           | {:parsec, atom | {module, atom}}
            | {:repeat, t, mfargs}
            | {:times, t, min :: non_neg_integer, pos_integer}
 
@@ -221,7 +253,7 @@ defmodule NimbleParsec do
   `parsec/2` is useful to implement recursive definitions.
 
   Note while `parsec/2` can be used to compose smaller combinators,
-  the favorite mechanism for doing composition is via regular functions
+  the preferred mechanism for doing composition is via regular functions
   and not via `parsec/2`. Let's see a practical example. Imagine
   that you have this module:
 
@@ -316,12 +348,34 @@ defmodule NimbleParsec do
   compilation times are high. In this sense, you can use `parsec/2`
   to improve compilation time at the cost of runtime performance.
   By using `parsec/2`, the tree size built at compile time will be
-  reduced although runtime performance is degraded as every time
-  this function is invoked it introduces a stacktrace entry.
+  reduced although runtime performance is degraded as `parsec`
+  introduces a stacktrace entry.
+
+  ## Remote combinators
+
+  You can also reference combinators in other modules by passing
+  a tuple with the module name and a function to `parsec/2` as follows:
+
+      defmodule RemoteCombinatorModule do
+        defcombinator :upcase_unicode, utf8_char([...long, list, of, unicode, chars...])
+      end
+
+      defmodule LocalModule do
+        # Parsec that depends on `:upcase_A`
+        defparsec :parsec_name,
+                  ...
+                  |> ascii_char([?a..?Z])
+                  |> parsec({RemoteCombinatorModule, :upcase_unicode})
+      end
+
+  Remote combinators are useful when breaking the compilation of
+  large modules apart in order to use Elixir's ability to compile
+  modules in parallel.
 
   ## Examples
 
-  A very limited but recursive XML parser could be written as follows:
+  A good example of using `parsec` is with recursive parsers.
+  A limited but recursive XML parser could be written as follows:
 
       defmodule SimpleXML do
         import NimbleParsec
@@ -363,15 +417,21 @@ defmodule NimbleParsec do
                      |> concat(closing_tag)
                      |> wrap()
 
-  Note that now you can no longer invoke `SimpleXML.xml(xml)` as
-  there is no associating parsing function. Eventually you will
-  have to define a `defparsec/3` or `defparsecp/3`, that invokes
-  the combinator above via `parsec/3`.
-
+  When using `defcombinatorp`, you can no longer invoke
+  `SimpleXML.xml(xml)` as there is no associated parsing function.
+  You can only access the combinator above via `parsec/2`.
   """
-  @spec parsec(t(), atom()) :: t()
-  def parsec(combinator \\ empty(), name) when is_combinator(combinator) and is_atom(name) do
+  @spec parsec(t(), name :: atom()) :: t()
+  @spec parsec(t(), {module(), function_name :: atom()}) :: t()
+  def parsec(combinator \\ empty(), name)
+
+  def parsec(combinator, name) when is_combinator(combinator) and is_atom(name) do
     [{:parsec, name} | combinator]
+  end
+
+  def parsec(combinator, {module, function})
+      when is_combinator(combinator) and is_atom(module) and is_atom(function) do
+    [{:parsec, {module, function}} | combinator]
   end
 
   @doc ~S"""
@@ -770,12 +830,6 @@ defmodule NimbleParsec do
     quoted_pre_traverse(combinator, to_pre_traverse, {__MODULE__, :__pre_traverse__, [call]})
   end
 
-  @deprecated "Use post_traverse/3 instead"
-  @doc false
-  def traverse(combinator \\ empty(), to_traverse, call) do
-    post_traverse(combinator, to_traverse, call)
-  end
-
   @doc ~S"""
   Checks if a combinator is ahead.
 
@@ -916,12 +970,6 @@ defmodule NimbleParsec do
   def quoted_pre_traverse(combinator \\ empty(), to_pre_traverse, {_, _, _} = call)
       when is_combinator(combinator) and is_combinator(to_pre_traverse) do
     quoted_traverse(combinator, to_pre_traverse, :pre, call)
-  end
-
-  @deprecated "Use quoted_post_traverse/3 instead"
-  @doc false
-  def quoted_traverse(combinator \\ empty(), to_traverse, call) do
-    quoted_post_traverse(combinator, to_traverse, call)
   end
 
   @doc ~S"""

@@ -1293,6 +1293,25 @@ defmodule NimbleParsecTest do
     end
   end
 
+  describe "parsec/1 with remote combinator" do
+    defmodule Remote do
+      defcombinator :parsec_remote,
+                    choice([
+                      map(ascii_char([?a..?z]), {:to_string, []}),
+                      map(ascii_char([?A..?Z]), {:to_string, []})
+                    ])
+    end
+
+    defparsecp :parsec_remote_repeat, repeat(parsec({Remote, :parsec_remote}))
+
+    test "returns ok/error with repeat" do
+      assert parsec_remote_repeat("az") == {:ok, ["97", "122"], "", %{}, {1, 0}, 2}
+      assert parsec_remote_repeat("AZ") == {:ok, ["65", "90"], "", %{}, {1, 0}, 2}
+      assert parsec_remote_repeat("aAzZ") == {:ok, ["97", "65", "122", "90"], "", %{}, {1, 0}, 4}
+      assert parsec_remote_repeat("1aAzZ") == {:ok, [], "1aAzZ", %{}, {1, 0}, 0}
+    end
+  end
+
   describe "eos/1 combinator" do
     defparsecp :only_eos, eos()
     defparsecp :multi_eos, eos() |> eos()
@@ -1314,6 +1333,25 @@ defmodule NimbleParsecTest do
                {:error,
                 "expected ASCII character in the range 'a' to 'z', followed by end of string",
                 "aa", %{}, {1, 0}, 0}
+    end
+  end
+
+  describe "continuing parser" do
+    defparsecp :digits, [?0..?9] |> ascii_char() |> times(min: 1) |> label("digits")
+    defparsecp :chars, [?a..?z] |> ascii_char() |> times(min: 1) |> label("chars")
+
+    test "returns ok" do
+      string = "123abc"
+      assert {:ok, '123', "abc" = rest, %{}, {1, 0} = line, byte_offset} = digits(string)
+      assert chars(rest, line: line, byte_offset: byte_offset) == {:ok, 'abc', "", %{}, {1, 0}, 6}
+    end
+
+    test "returns error" do
+      string = "123:abc"
+      assert {:ok, '123', ":abc" = rest, %{}, {1, 0} = line, byte_offset} = digits(string)
+
+      assert chars(rest, line: line, byte_offset: byte_offset) ==
+               {:error, "expected chars", ":abc", %{}, {1, 0}, 3}
     end
   end
 

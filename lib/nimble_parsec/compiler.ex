@@ -15,10 +15,9 @@ defmodule NimbleParsec.Compiler do
 
     ## Options
 
-      * `:line` - the initial line, defaults to 1
-      * `:byte_offset` - the initial byte offset, defaults to 0
-      * `:context` - the initial context value. It will be converted
-        to a map
+      * `:byte_offset` - the byte offset for the whole binary, defaults to 0
+      * `:line` - the line and the byte offset into that line, defaults to `{1, byte_offset}`
+      * `:context` - the initial context value. It will be converted to a map
     """
 
     spec =
@@ -38,11 +37,16 @@ defmodule NimbleParsec.Compiler do
 
     body =
       quote do
-        line = Keyword.get(opts, :line, 1)
-        offset = Keyword.get(opts, :byte_offset, 0)
         context = Map.new(Keyword.get(opts, :context, []))
+        byte_offset = Keyword.get(opts, :byte_offset, 0)
 
-        case unquote(:"#{name}__0")(binary, [], [], context, {line, offset}, offset) do
+        line =
+          case Keyword.get(opts, :line, 1) do
+            {_, _} = line -> line
+            line -> {line, byte_offset}
+          end
+
+        case unquote(:"#{name}__0")(binary, [], [], context, line, byte_offset) do
           {:ok, acc, rest, context, line, offset} ->
             {:ok, :lists.reverse(acc), rest, context, line, offset}
 
@@ -147,9 +151,22 @@ defmodule NimbleParsec.Compiler do
           body
       end
 
+    call =
+      case parsec do
+        {mod, fun} ->
+          quote do
+            unquote(mod).unquote(:"#{fun}__0")(rest, acc, [], context, line, offset)
+          end
+
+        fun ->
+          quote do
+            unquote(:"#{fun}__0")(rest, acc, [], context, line, offset)
+          end
+      end
+
     body =
       quote do
-        case unquote(:"#{parsec}__0")(rest, acc, [], context, line, offset) do
+        case unquote(call) do
           {:ok, acc, rest, context, line, offset} ->
             unquote(next)(rest, acc, stack, context, line, offset)
 
@@ -931,6 +948,10 @@ defmodule NimbleParsec.Compiler do
 
   defp label({:traverse, combinators, _, _}) do
     labels(combinators)
+  end
+
+  defp label({:parsec, {_module, function}}) do
+    Atom.to_string(function)
   end
 
   defp label({:parsec, name}) do
